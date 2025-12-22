@@ -45,12 +45,4 @@ pipeline {
             }
         }
     }
-    
-    post {
-        always {
-            // Clean workspace and remove terraform binaries to keep your 8GB RAM system healthy
-            sh "rm -rf .terraform"
-            cleanWs()
-        }
-    }
 }
