@@ -1,0 +1,44 @@
+---
+- name: Configure AIOps Platform on EC2
+  hosts: all
+  become: yes
+  vars:
+    kube_version: "v1.28"
+  tasks:
+    - name: Update apt and install dependencies
+      apt:
+        name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip]
+        update_cache: yes
+
+    - name: Install K3s (Lightweight Kubernetes)
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for K3s to be ready
+      pause:
+        seconds: 30
+
+    - name: Install Helm
+      shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Add Helm Repositories
+      become: no
+      shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo add grafana https://grafana.github.io/helm-charts
+        helm repo update
+
+    - name: Install Prometheus Stack (Monitoring)
+      become: no
+      shell: |
+        helm install prometheus prometheus-community/kube-prometheus-stack \
+        --namespace monitoring --create-namespace
+
+    - name: Install Loki (Logging)
+      become: no
+      shell: |
+        helm install loki grafana/loki-stack \
+        --namespace monitoring
