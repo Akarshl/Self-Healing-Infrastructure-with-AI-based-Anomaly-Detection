@@ -37,7 +37,7 @@ resource "aws_key_pair" "jenkins_key" {
 
 # 3. Create EC2 Instance
 resource "aws_instance" "app_server" {
-  ami                    = "ami-0e2c8ccd4e0269736" # Ubuntu 22.04 LTS
+  ami                    = "ami-0ecb62995f68bb549" # Ubuntu 22.04 LTS
   instance_type          = var.instance_type
   key_name               = aws_key_pair.jenkins_key.key_name
   vpc_security_group_ids = [aws_security_group.jenkins_sg.id]
