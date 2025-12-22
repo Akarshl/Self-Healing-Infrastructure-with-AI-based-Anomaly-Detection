@@ -2,7 +2,7 @@ pipeline {
     agent any
     parameters {
         choice(name: 'TF_ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform Action')
-        choice(name: 'INSTANCE_TYPE', choices: ['t3.medium', 't2.micro'], description: 'EC2 Instance Size')
+        choice(name: 'INSTANCE_TYPE', choices: ['t3.small', 't3.micro'], description: 'EC2 Instance Size')
         string(name: 'INSTANCE_NAME', defaultValue: 'my-ec2-machine', description: 'Name Tag')
         password(name: 'SSH_PUBLIC_KEY', description: 'Paste your SSH Public Key content')
     }
