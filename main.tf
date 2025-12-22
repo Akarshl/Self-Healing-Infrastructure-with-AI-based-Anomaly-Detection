@@ -32,7 +32,7 @@ resource "aws_security_group" "jenkins_sg" {
 # 2. Create Key Pair using the string passed from Jenkins
 resource "aws_key_pair" "jenkins_key" {
   key_name   = "${var.instance_name}-key"
-  public_key = var.public_key_data
+  public_key = file("${path.module}/id_rsa.pub")
 }
 
 # 3. Create EC2 Instance
