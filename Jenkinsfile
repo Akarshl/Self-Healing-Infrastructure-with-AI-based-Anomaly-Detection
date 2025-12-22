@@ -1,6 +1,11 @@
 pipeline {
     agent any
     
+    // Global environment variables to ensure Terraform always sees the region
+    environment {
+        AWS_DEFAULT_REGION = "us-east-1"
+    }
+
     parameters {
         choice(name: 'TF_ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Select Terraform Action')
         choice(name: 'INSTANCE_TYPE', choices: ['t3.small', 't3.micro'], description: 'Select EC2 Size')
@@ -11,54 +16,39 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                // Pulls the main.tf, variables.tf, etc., from your Git repo
                 checkout scm
             }
         }
 
         stage('Terraform Execution') {
             steps {
-                // Connect to the AWS secret file you created in Jenkins
+                // Connect to the secret file ID 'aws-credentials-file'
                 withCredentials([file(credentialsId: 'aws-credentials-file', variable: 'SECRET_FILE_PATH')]) {
                     script {
-                        // 1. Setup AWS Environment for the Terraform Provider
+                        // Force Terraform to look at the decrypted file path
+                        // We use env.XXX to ensure it persists for the sh steps below
                         env.AWS_SHARED_CREDENTIALS_FILE = "${SECRET_FILE_PATH}"
-                        env.AWS_DEFAULT_REGION = "us-east-1" 
 
-                        // 2. Initialize Terraform
                         sh "terraform init"
 
-                        // 3. Use withEnv to safely handle the SSH Public Key.
-                        // Terraform automatically maps TF_VAR_xyz to the variable "xyz"
+                        // Use withEnv to safely inject the SSH key into the environment
+                        // This prevents the "Syntax error: '(' unexpected"
                         withEnv(["TF_VAR_public_key_data=${params.SSH_PUBLIC_KEY}"]) {
                             
-                            // Define other variables as a string
                             def tfArgs = "-var='instance_type=${params.INSTANCE_TYPE}' " +
                                          "-var='instance_name=${params.INSTANCE_NAME}'"
                             
                             if (params.TF_ACTION == 'plan') {
-                                echo "Running Terraform Plan..."
                                 sh "terraform plan ${tfArgs}"
                             } 
-                            else if (params.TF_ACTION == 'apply') {
-                                echo "Running Terraform Apply..."
-                                sh "terraform apply -auto-approve ${tfArgs}"
-                            }
-                            else if (params.TF_ACTION == 'destroy') {
-                                echo "Running Terraform Destroy..."
-                                sh "terraform destroy -auto-approve ${tfArgs}"
+                            else {
+                                // apply or destroy
+                                sh "terraform ${params.TF_ACTION} -auto-approve ${tfArgs}"
                             }
                         }
                     }
                 }
             }
-        }
-    }
-    
-    post {
-        always {
-            // Clean up the temporary environment variables
-            cleanWs()
         }
     }
 }
