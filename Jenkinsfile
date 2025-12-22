@@ -44,20 +44,16 @@ pipeline {
         }
 
         stage('Ansible Configuration') {
-            // ONLY run this stage if TF_ACTION is 'apply'
-            when {
-                environment name: 'TF_ACTION', value: 'apply'
-            }
+            when { environment name: 'TF_ACTION', value: 'apply' }
             steps {
                 script {
-                    // Added a sleep to ensure the EC2 instance is fully initialized before SSH
                     sh "sleep 30"
-                    
                     def ec2Ip = sh(script: "terraform output -raw ec2_public_ip", returnStdout: true).trim()
         
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_PATH')]) {
+                        // Call ansible-playbook via the python3 module to avoid 'command not found'
                         sh """
-                        ansible-playbook -i ${ec2Ip}, setup-aiops.yml \
+                        python3 -m ansible playbook -i ${ec2Ip}, setup-aiops.yml \
                         --user ubuntu \
                         --private-key ${SSH_KEY_PATH} \
                         --ssh-common-args='-o StrictHostKeyChecking=no'
