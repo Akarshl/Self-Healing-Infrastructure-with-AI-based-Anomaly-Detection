@@ -2,14 +2,9 @@ pipeline {
     agent any
     parameters {
         choice(name: 'TF_ACTION', choices: ['plan', 'apply', 'destroy'])
-        choice(name: 'INSTANCE_TYPE', choices: ['t3.micro', 't3.small'])
+        choice(name: 'INSTANCE_TYPE', choices: ['t3.small', 't3.micro'])
         string(name: 'INSTANCE_NAME', defaultValue: 'my-ec2-machine')
-        password(name: 'SSH_PUBLIC_KEY', description: 'AAAAB3NzaC1yc2EAAAADAQABAAABAQCr382LNJrqSc9JPo3CrVxpfhkZ+3ropSsY
-knkJaB+5FWbil81BIVoYSojQATuKzoK3zyn55TI+tIjK/TAZ0y9ficbbow4h1ntB
-oMBmNL+VAUzPxKYwJOJ/M3o8gR0TrGbi4WYPzeDNLnzB8o9yMnnqAMPziAUOBJBs
-OlvBW6hbgGWFkZaWYWqLcgQx307bWBnG6JQZVihW5b+740OvNrxnOljan5QOSaD7
-J8npUPAs2UHcn4vou8Ex7wI/rFfW38LVQhsCsZewbDDePwZzfWCSS5C2ndau0tfk
-yd1dNHCSiufOZx4fv+BabQeCHXEihGs1D3VzO+RURl6ad2Uy91bh')
+        password(name: 'SSH_PUBLIC_KEY', description: 'Paste SSH Public Key content')
     }
     stages {
         stage('Terraform') {
