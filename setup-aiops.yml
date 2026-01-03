@@ -59,8 +59,7 @@
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    - name: Install Loki (Explicitly NOT default)
-      become: no
+    - name: Install Loki with Memberlist Fix
       shell: |
         helm upgrade --install loki grafana/loki-stack \
         --namespace monitoring \
@@ -68,6 +67,6 @@
         --set loki.persistence.size=5Gi \
         --set grafana.enabled=false \
         --set promtail.enabled=true \
-        --set "loki.datasource.isDefault=false"
+        --set loki.memberlist.service.publishNotReadyAddresses=true
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
