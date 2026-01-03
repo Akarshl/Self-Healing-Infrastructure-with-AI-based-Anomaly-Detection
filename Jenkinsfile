@@ -1,6 +1,11 @@
 pipeline {
     agent any
     
+    // This ensures your local laptop paths are available to Jenkins
+    environment {
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH}"
+    }
+    
     parameters {
         choice(name: 'TF_ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Select Terraform Action')
         choice(name: 'INSTANCE_TYPE', choices: ['t3.small', 't3.micro', 'm7i-flex.large'], description: 'Select EC2 Size')
@@ -11,6 +16,10 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
+                    // Check versions to verify the PATH is working correctly
+                    sh "terraform --version"
+                    sh "python3 -m ansible --version"
+                    
                     sh "rm -rf .terraform"
                     sh "terraform init"
                 }
@@ -47,11 +56,12 @@ pipeline {
             when { environment name: 'TF_ACTION', value: 'apply' }
             steps {
                 script {
+                    // Give AWS time to finish initializing the instance
                     sh "sleep 30"
                     def ec2Ip = sh(script: "terraform output -raw ec2_public_ip", returnStdout: true).trim()
         
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_PATH')]) {
-                        // Call ansible-playbook via the python3 module to avoid 'command not found'
+                        // We use the python3 module approach to ensure Ansible is found on your new laptop
                         sh """
                         python3 -m ansible playbook -i ${ec2Ip}, setup-aiops.yml \
                         --user ubuntu \
