@@ -13,7 +13,7 @@ pipeline {
                 script {
                     // Check versions to verify the PATH is working correctly
                     sh "terraform --version"
-                    sh "python3 -m ansible --version"
+                    sh "ansible-playbook --version"
                     
                     sh "rm -rf .terraform"
                     sh "terraform init"
