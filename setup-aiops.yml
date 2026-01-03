@@ -2,8 +2,6 @@
 - name: Configure AIOps Platform on EC2
   hosts: all
   become: yes
-  vars:
-    kube_version: "v1.28"
   tasks:
     - name: Update apt and install dependencies
       apt:
@@ -17,7 +15,26 @@
 
     - name: Wait for K3s to be ready
       pause:
-        seconds: 30
+        seconds: 20
+
+    # FIX START: Set up Kubeconfig for the ubuntu user
+    - name: Create .kube directory
+      file:
+        path: "/home/ubuntu/.kube"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy K3s config to ubuntu user's home
+      copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/ubuntu/.kube/config
+        remote_src: yes
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+    # FIX END
 
     - name: Install Helm
       shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -31,11 +48,13 @@
         helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
 
-    - name: Install Prometheus Stack (Monitoring)
+    - name: Install Prometheus Stack
       become: no
       shell: |
         helm install prometheus prometheus-community/kube-prometheus-stack \
         --namespace monitoring --create-namespace
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
 
     - name: Install Loki (Logging)
       become: no
