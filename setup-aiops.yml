@@ -51,13 +51,20 @@
     - name: Install Prometheus Stack
       become: no
       shell: |
-        helm install prometheus prometheus-community/kube-prometheus-stack \
-        --namespace monitoring --create-namespace
+        helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+        --namespace monitoring --create-namespace \
+        --set grafana.sidecar.datasources.enabled=true \
+        --set grafana.sidecar.datasources.defaultDatasourceEnabled=true
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    - name: Install Loki (Logging)
+    - name: Install Loki
       become: no
       shell: |
-        helm install loki grafana/loki-stack \
-        --namespace monitoring
+        helm upgrade --install loki grafana/loki-stack \
+        --namespace monitoring \
+        --set loki.persistence.enabled=true \
+        --set grafana.enabled=false \
+        --set promtail.enabled=true
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
