@@ -58,7 +58,7 @@ pipeline {
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_PATH')]) {
                         // We use the python3 module approach to ensure Ansible is found on your new laptop
                         sh """
-                        python3 -m ansible playbook -i ${ec2Ip}, setup-aiops.yml \
+                        ansible playbook -i ${ec2Ip}, setup-aiops.yml \
                         --user ubuntu \
                         --private-key ${SSH_KEY_PATH} \
                         --ssh-common-args='-o StrictHostKeyChecking=no'
