@@ -47,22 +47,19 @@ pipeline {
             }
         }
 
-        stage('Ansible Configuration') {
+        sstage('Ansible Configuration') {
             when { environment name: 'TF_ACTION', value: 'apply' }
             steps {
                 script {
-                    // Give AWS time to finish initializing the instance
                     sh "sleep 30"
                     def ec2Ip = sh(script: "terraform output -raw ec2_public_ip", returnStdout: true).trim()
         
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_PATH')]) {
-                        // We use the python3 module approach to ensure Ansible is found on your new laptop
-                        sh """
-                        ansible playbook -i ${ec2Ip}, setup-aiops.yml \
-                        --user ubuntu \
-                        --private-key ${SSH_KEY_PATH} \
-                        --ssh-common-args='-o StrictHostKeyChecking=no'
-                        """
+                        // FIX: Calling the binary directly and avoiding insecure interpolation
+                        sh 'ansible-playbook -i ' + ec2Ip + ', setup-aiops.yml ' +
+                           '--user ubuntu ' +
+                           '--private-key $SSH_KEY_PATH ' +
+                           '--ssh-common-args="-o StrictHostKeyChecking=no"'
                     }
                 }
             }
