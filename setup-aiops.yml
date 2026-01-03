@@ -1,7 +1,13 @@
 ---
 - name: Configure AIOps Platform on EC2
   hosts: all
-  become: yes  # System-wide default is root
+  become: yes  # System-wide default for K3s/Helm installation
+  vars:
+    # Pinning versions to prevent future compatibility issues
+    loki_chart_version: "2.9.11"
+    prometheus_chart_version: "45.7.1"
+    loki_image_tag: "2.9.3"  # Fixed compatibility with newer Grafana versions
+
   tasks:
     - name: Update apt and install dependencies
       apt:
@@ -39,34 +45,32 @@
       args:
         creates: /usr/local/bin/helm
 
-    # Use become: no to ensure repos are added to the ubuntu user's context
     - name: Add Helm Repositories
-      become: no
+      become: no # Ensure repos are added to ubuntu user context
       shell: |
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
 
     - name: Install Prometheus Stack
-      become: no  # CRITICAL: Must match the user who added the repos
+      become: no
       shell: |
         helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
         --namespace monitoring --create-namespace \
+        --version {{ prometheus_chart_version }} \
         --set grafana.sidecar.datasources.enabled=true \
         --set grafana.sidecar.datasources.label=grafana_datasource \
         --set grafana.sidecar.datasources.defaultDatasourceEnabled=true
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    - name: Install Loki with Memberlist Fix
-      become: no  # CRITICAL: Must match the user who added the repos
+    - name: Install Loki with Memberlist and Version Fix
+      become: no
       shell: |
         helm upgrade --install loki grafana/loki-stack \
         --namespace monitoring \
-        --set loki.persistence.enabled=true \
-        --set loki.persistence.size=5Gi \
-        --set grafana.enabled=false \
-        --set promtail.enabled=true \
-        --set loki.memberlist.service.publishNotReadyAddresses=true
-      environment:
-        KUBECONFIG: "/home/ubuntu/.kube/config"
+        --version {{ loki_chart_version }} \
+        --set loki.image.tag={{ loki_image_tag }} \
+        --set loki.
