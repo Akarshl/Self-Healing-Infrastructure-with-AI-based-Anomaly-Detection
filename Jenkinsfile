@@ -47,7 +47,7 @@ pipeline {
             }
         }
 
-        sstage('Ansible Configuration') {
+        stage('Ansible Configuration') {
             when { environment name: 'TF_ACTION', value: 'apply' }
             steps {
                 script {
