@@ -1,7 +1,7 @@
 ---
 - name: Configure AIOps Platform on EC2
   hosts: all
-  become: yes
+  become: yes  # System-wide default is root
   tasks:
     - name: Update apt and install dependencies
       apt:
@@ -17,7 +17,6 @@
       pause:
         seconds: 20
 
-    # FIX START: Set up Kubeconfig for the ubuntu user
     - name: Create .kube directory
       file:
         path: "/home/ubuntu/.kube"
@@ -34,13 +33,13 @@
         owner: ubuntu
         group: ubuntu
         mode: '0600'
-    # FIX END
 
     - name: Install Helm
       shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
         creates: /usr/local/bin/helm
 
+    # Use become: no to ensure repos are added to the ubuntu user's context
     - name: Add Helm Repositories
       become: no
       shell: |
@@ -49,7 +48,7 @@
         helm repo update
 
     - name: Install Prometheus Stack
-      become: no
+      become: no  # CRITICAL: Must match the user who added the repos
       shell: |
         helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
         --namespace monitoring --create-namespace \
@@ -60,6 +59,7 @@
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
     - name: Install Loki with Memberlist Fix
+      become: no  # CRITICAL: Must match the user who added the repos
       shell: |
         helm upgrade --install loki grafana/loki-stack \
         --namespace monitoring \
