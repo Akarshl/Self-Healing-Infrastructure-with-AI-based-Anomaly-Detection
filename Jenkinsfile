@@ -1,11 +1,6 @@
 pipeline {
     agent any
     
-    // This ensures your local laptop paths are available to Jenkins
-    environment {
-        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH}"
-    }
-    
     parameters {
         choice(name: 'TF_ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Select Terraform Action')
         choice(name: 'INSTANCE_TYPE', choices: ['t3.small', 't3.micro', 'm7i-flex.large'], description: 'Select EC2 Size')
