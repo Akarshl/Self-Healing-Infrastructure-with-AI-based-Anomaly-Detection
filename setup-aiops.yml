@@ -1,76 +1,117 @@
 ---
-- name: Configure AIOps Platform on EC2
+- name: Configure AIOps Platform and Deploy FastAPI
   hosts: all
-  become: yes  # System-wide default for K3s/Helm installation
+  become: yes
   vars:
-    # Pinning versions to prevent future compatibility issues
+    # Infrastructure Versions
     loki_chart_version: "2.9.11"
     prometheus_chart_version: "45.7.1"
-    loki_image_tag: "2.9.3"  # Fixed compatibility with newer Grafana versions
+    loki_image_tag: "2.9.3"
+    
+    # Project Paths
+    project_dir: "/home/ubuntu/aiops-project"
+    venv_path: "{{ project_dir }}/venv"
+    csv_filename: "ec2_cpu_utilization_5f5533.csv"
 
   tasks:
-    - name: Update apt and install dependencies
+    # 1. System Dependencies & Python Setup
+    - name: Install system packages
       apt:
-        name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip]
+        name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip, python3-venv]
         update_cache: yes
 
-    - name: Install K3s (Lightweight Kubernetes)
+    - name: Create project directory
+      file:
+        path: "{{ project_dir }}/data"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    # 2. Kubernetes Setup (K3s & Helm)
+    - name: Install K3s
       shell: curl -sfL https://get.k3s.io | sh -
       args:
         creates: /usr/local/bin/k3s
 
-    - name: Wait for K3s to be ready
-      pause:
-        seconds: 20
-
-    - name: Create .kube directory
-      file:
-        path: "/home/ubuntu/.kube"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: '0755'
-
-    - name: Copy K3s config to ubuntu user's home
-      copy:
-        src: /etc/rancher/k3s/k3s.yaml
-        dest: /home/ubuntu/.kube/config
-        remote_src: yes
-        owner: ubuntu
-        group: ubuntu
-        mode: '0600'
+    # FIX: Enable non-root kubectl access
+    - name: Configure non-root kubectl access
+      shell: |
+        mkdir -p /home/ubuntu/.kube
+        cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+        chown ubuntu:ubuntu /home/ubuntu/.kube/config
+        chmod 600 /home/ubuntu/.kube/config
+      args:
+        creates: /home/ubuntu/.kube/config
 
     - name: Install Helm
       shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
         creates: /usr/local/bin/helm
 
-    - name: Add Helm Repositories
-      become: no # Ensure repos are added to ubuntu user context
+    # 3. Observability Stack (Loki & Prometheus)
+    - name: Add Helm Repos and Install Stack
+      become: no
       shell: |
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
-      environment:
-        KUBECONFIG: "/home/ubuntu/.kube/config"
-
-    - name: Install Prometheus Stack
-      become: no
-      shell: |
+        
         helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
-        --namespace monitoring --create-namespace \
-        --version {{ prometheus_chart_version }} \
-        --set grafana.sidecar.datasources.enabled=true \
-        --set grafana.sidecar.datasources.label=grafana_datasource \
-        --set grafana.sidecar.datasources.defaultDatasourceEnabled=true
+          --namespace monitoring --create-namespace --version {{ prometheus_chart_version }} \
+          --set grafana.sidecar.datasources.enabled=true \
+          --set grafana.sidecar.datasources.label=grafana_datasource
+          
+        helm upgrade --install loki grafana/loki-stack \
+          --namespace monitoring --version {{ loki_chart_version }} \
+          --set loki.image.tag={{ loki_image_tag }} --set promtail.enabled=true
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    - name: Install Loki with Memberlist and Version Fix
-      become: no
-      shell: |
-        helm upgrade --install loki grafana/loki-stack \
-        --namespace monitoring \
-        --version {{ loki_chart_version }} \
-        --set loki.image.tag={{ loki_image_tag }} \
-        --set loki.
+    # 4. ML Assets & Python Dependencies
+    - name: Copy Kaggle CSV from local repository
+      copy:
+        src: "./{{ csv_filename }}"
+        dest: "{{ project_dir }}/data/{{ csv_filename }}"
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Install Python ML packages in virtualenv
+      pip:
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn]
+        virtualenv: "{{ venv_path }}"
+        virtualenv_command: "/usr/bin/python3 -m venv"
+      #
+
+    # 5. FastAPI Service Deployment
+    - name: Deploy FastAPI Application Script
+      copy:
+        dest: "{{ project_dir }}/main.py"
+        src: "./main.py" # Assumes your script is in your git repo
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Create Systemd service for FastAPI
+      copy:
+        dest: /etc/systemd/system/fastapi.service
+        content: |
+          [Unit]
+          Description=Gunicorn instance to serve FastAPI
+          After=network.target
+
+          [Service]
+          User=ubuntu
+          Group=ubuntu
+          WorkingDirectory={{ project_dir }}
+          Environment="PATH={{ venv_path }}/bin"
+          ExecStart={{ venv_path }}/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and Enable FastAPI Service
+      systemd_service:
+        name: fastapi
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+      #
