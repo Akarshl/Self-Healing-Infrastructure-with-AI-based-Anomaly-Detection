@@ -134,3 +134,11 @@
       until: result.status == 200
       retries: 5
       delay: 5
+
+    - name: Trigger Chaos CPU Spike for AI Testing
+      become: no
+      shell: |
+        kubectl apply -f {{ project_dir }}/cpu-spike.yaml
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
+      tags: [never, chaos]
