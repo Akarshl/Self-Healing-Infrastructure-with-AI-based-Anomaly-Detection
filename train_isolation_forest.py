@@ -25,3 +25,12 @@ plt.title("AIOps Detection: EC2 CPU Anomalies")
 plt.legend()
 plt.savefig("anomaly_detection_result.png")
 print("Result saved as anomaly_detection_result.png")
+
+# 4. Save the Model
+# Ensure the directory exists
+os.makedirs("models", exist_ok=True)
+
+# Save the model to a file
+model_filename = "models/iso_forest.joblib"
+joblib.dump(model, model_filename)
+print(f"Model saved successfully at {model_filename}")
