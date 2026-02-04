@@ -15,6 +15,7 @@
 
   tasks:
     # --- 1. System & Kubernetes Setup ---
+    
     - name: Install system dependencies
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip, python3-venv, net-tools]
@@ -26,7 +27,9 @@
         state: directory
         owner: ubuntu
         group: ubuntu
+        mode: '0755'
       loop:
+        - "{{ project_dir }}"
         - "{{ project_dir }}/data"
         - "{{ project_dir }}/models"
 
@@ -61,17 +64,18 @@
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
     # --- 3. Asset Deployment & ML Setup ---
-    - name: Copy AIOps Python Scripts
+    
+    - name: Copy AIOps Python Scripts and Data
       copy:
-        src: "./{{ item }}"
-        dest: "{{ project_dir }}/{{ item }}"
+        src: "./{{ item.src }}"
+        dest: "{{ project_dir }}/{{ item.dest }}"
         owner: ubuntu
         group: ubuntu
       loop:
-        - "main.py"
-        - "train_isolation_forest.py"
-        - "healer.py"
-        - "{{ csv_filename }}"
+        - { src: "main.py", dest: "main.py" }
+        - { src: "train_isolation_forest.py", dest: "train_isolation_forest.py" }
+        - { src: "healer.py", dest: "healer.py" }
+        - { src: "{{ csv_filename }}", dest: "data/{{ csv_filename }}" }
 
     - name: Automate Fix for main.py (Inject NodePort and Absolute Path)
       replace:
@@ -79,13 +83,13 @@
         regexp: 'PROMETHEUS_URL = ".*"'
         replace: 'PROMETHEUS_URL = "http://localhost:{{ prometheus_nodeport.stdout }}"'
 
-    - name: Update MODEL_PATH to Absolute
+    - name: Update MODEL_PATH to Absolute in main.py
       replace:
         path: "{{ project_dir }}/main.py"
         regexp: 'MODEL_PATH = "models/iso_forest.joblib"'
         replace: 'MODEL_PATH = "{{ project_dir }}/models/iso_forest.joblib"'
 
-    - name: Install ML Libraries and Train Model
+    - name: Install ML Libraries
       pip:
         name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client]
         virtualenv: "{{ venv_path }}"
@@ -98,6 +102,7 @@
         chdir: "{{ project_dir }}"
 
     # --- 4. Deployment of Services (API & Healer) ---
+    
     - name: Deploy Systemd Services
       copy:
         dest: "/etc/systemd/system/{{ item.name }}.service"
