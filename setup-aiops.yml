@@ -1,9 +1,9 @@
 ---
-- name: End-to-End AIOps Platform Deployment
+- name: End-to-End AIOps Self-Healing Platform
   hosts: all
   become: yes
   vars:
-    # Infrastructure & Observability Versions
+    # Infrastructure Versions
     loki_chart_version: "2.9.11"
     prometheus_chart_version: "45.7.1"
     loki_image_tag: "2.9.3"
@@ -14,10 +14,10 @@
     csv_filename: "ec2_cpu_utilization_5f5533.csv"
 
   tasks:
-    # 1. SYSTEM PREPARATION
+    # --- 1. System & Kubernetes Setup ---
     - name: Install system dependencies
       apt:
-        name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip, python3-venv]
+        name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip, python3-venv, net-tools]
         update_cache: yes
 
     - name: Create project directories
@@ -30,18 +30,9 @@
         - "{{ project_dir }}/data"
         - "{{ project_dir }}/models"
 
-    # 2. KUBERNETES & TOOLS
-    - name: Install K3s (Lightweight Kubernetes)
-      shell: curl -sfL https://get.k3s.io | sh -
-      args:
-        creates: /usr/local/bin/k3s
-
-    - name: Wait for K3s to be ready
-      pause:
-        seconds: 20
-
-    - name: Enable non-root kubectl access
+    - name: Setup K3s and non-root kubectl
       shell: |
+        curl -sfL https://get.k3s.io | sh -
         mkdir -p /home/ubuntu/.kube
         cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
@@ -49,96 +40,120 @@
       args:
         creates: /home/ubuntu/.kube/config
 
-    - name: Install Helm
-      shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-      args:
-        creates: /usr/local/bin/helm
-
-    # 3. OBSERVABILITY STACK
-    - name: Configure Helm Repos and Install Monitoring
+    # --- 2. Observability & Connectivity FIX ---
+    - name: Install Helm and Monitoring Stack
       become: no
       shell: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-        helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
-        
-        # Install Prometheus with Grafana Datasource Sidecar
-        helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
-          --namespace monitoring --create-namespace --version {{ prometheus_chart_version }} \
-          --set grafana.sidecar.datasources.enabled=true \
-          --set grafana.sidecar.datasources.label=grafana_datasource
-          
-        # Install Loki with fixed version for compatibility
-        helm upgrade --install loki grafana/loki-stack \
-          --namespace monitoring --version {{ loki_chart_version }} \
-          --set loki.image.tag={{ loki_image_tag }} --set promtail.enabled=true
+        helm upgrade --install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --version {{ prometheus_chart_version }}
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    # 4. ML ASSETS & TRAINING
-    - name: Copy project assets from Git repository
+    - name: Patch Prometheus to NodePort and Get Port
+      become: no
+      shell: |
+        kubectl patch svc prometheus-kube-prometheus-prometheus -n monitoring -p '{"spec":{"type":"NodePort"}}'
+        kubectl get svc prometheus-kube-prometheus-prometheus -n monitoring -o jsonpath='{.spec.ports[0].nodePort}'
+      register: prometheus_nodeport
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
+
+    # --- 3. Asset Deployment & ML Setup ---
+    - name: Copy AIOps Python Scripts
       copy:
-        src: "./{{ item.src }}"
-        dest: "{{ project_dir }}/{{ item.dest }}"
+        src: "./{{ item }}"
+        dest: "{{ project_dir }}/{{ item }}"
         owner: ubuntu
         group: ubuntu
       loop:
-        - { src: "{{ csv_filename }}", dest: "data/{{ csv_filename }}" }
-        - { src: "train_isolation_forest.py", dest: "train_isolation_forest.py" }
-        - { src: "main.py", dest: "main.py" }
+        - "main.py"
+        - "train_isolation_forest.py"
+        - "healer.py"
+        - "{{ csv_filename }}"
 
-    - name: Setup Python Virtual Environment and Install ML libraries
+    - name: Automate Fix for main.py (Inject NodePort and Absolute Path)
+      replace:
+        path: "{{ project_dir }}/main.py"
+        regexp: 'PROMETHEUS_URL = ".*"'
+        replace: 'PROMETHEUS_URL = "http://localhost:{{ prometheus_nodeport.stdout }}"'
+
+    - name: Update MODEL_PATH to Absolute
+      replace:
+        path: "{{ project_dir }}/main.py"
+        regexp: 'MODEL_PATH = "models/iso_forest.joblib"'
+        replace: 'MODEL_PATH = "{{ project_dir }}/models/iso_forest.joblib"'
+
+    - name: Install ML Libraries and Train Model
       pip:
-        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client, prophet]
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client]
         virtualenv: "{{ venv_path }}"
-        virtualenv_command: "/usr/bin/python3 -m venv"
 
-    - name: Train the Isolation Forest model
+    - name: Execute Model Training
       become: no
       shell: "{{ venv_path }}/bin/python {{ project_dir }}/train_isolation_forest.py"
       args:
         chdir: "{{ project_dir }}"
-      # This generates models/iso_forest.joblib for inference
 
-    # 5. PRODUCTION API DEPLOYMENT
-    - name: Configure Systemd service for FastAPI
+    # --- 4. Deployment of Services (API & Healer) ---
+    - name: Deploy Systemd Services
       copy:
-        dest: /etc/systemd/system/fastapi.service
+        dest: "/etc/systemd/system/{{ item.name }}.service"
         content: |
           [Unit]
-          Description=AIOps Inference API (FastAPI)
+          Description={{ item.desc }}
           After=network.target
 
           [Service]
           User=ubuntu
           WorkingDirectory={{ project_dir }}
           Environment="PATH={{ venv_path }}/bin"
-          ExecStart={{ venv_path }}/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+          Environment="KUBECONFIG=/home/ubuntu/.kube/config"
+          ExecStart={{ item.cmd }}
           Restart=always
 
           [Install]
           WantedBy=multi-user.target
+      loop:
+        - { name: 'fastapi', desc: 'AIOps API', cmd: "{{ venv_path }}/bin/uvicorn main:app --host 0.0.0.0 --port 8000" }
+        - { name: 'healer', desc: 'AIOps Healer', cmd: "{{ venv_path }}/bin/python {{ project_dir }}/healer.py" }
 
-    - name: Start and Enable FastAPI Service
+    - name: Start AIOps Services
       systemd_service:
-        name: fastapi
+        name: "{{ item }}"
         state: restarted
         enabled: yes
         daemon_reload: yes
+      loop: [fastapi, healer]
 
-    - name: Wait for API to become healthy
-      uri:
-        url: "http://localhost:8000/health"
-        status_code: 200
-      register: result
-      until: result.status == 200
-      retries: 5
-      delay: 5
-
-    - name: Trigger Chaos CPU Spike for AI Testing
+    # --- 5. Chaos Loop Setup ---
+    - name: Create Chaos Deployment Manifest
+      copy:
+        dest: "{{ project_dir }}/chaos-deployment.yaml"
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: chaos-spike-generator
+            namespace: monitoring
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: chaos-worker
+            template:
+              metadata:
+                labels:
+                  app: chaos-worker
+              spec:
+                containers:
+                - name: stress
+                  image: polinux/stress-ng:latest
+                  args: ["--cpu", "2", "--timeout", "600s"]
+      
+    - name: Apply Chaos Deployment
       become: no
-      shell: |
-        kubectl apply -f {{ project_dir }}/cpu-spike.yaml
+      shell: kubectl apply -f {{ project_dir }}/chaos-deployment.yaml
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
-      tags: [never, chaos]
