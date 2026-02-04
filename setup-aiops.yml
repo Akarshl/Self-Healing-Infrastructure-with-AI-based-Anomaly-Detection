@@ -92,4 +92,76 @@
 
     - name: Install ML Libraries
       pip:
-        name: [pandas, scikit-
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client]
+        virtualenv: "{{ venv_path }}"
+        virtualenv_command: "/usr/bin/python3 -m venv"
+
+    - name: Execute Model Training
+      become: no
+      shell: "{{ venv_path }}/bin/python {{ project_dir }}/train_isolation_forest.py"
+      args:
+        chdir: "{{ project_dir }}"
+
+    # --- 4. Deployment of Services (API & Healer) ---
+    
+    - name: Deploy Systemd Services
+      copy:
+        dest: "/etc/systemd/system/{{ item.name }}.service"
+        content: |
+          [Unit]
+          Description={{ item.desc }}
+          After=network.target
+
+          [Service]
+          User=ubuntu
+          WorkingDirectory={{ project_dir }}
+          Environment="PATH={{ venv_path }}/bin"
+          Environment="KUBECONFIG=/home/ubuntu/.kube/config"
+          ExecStart={{ item.cmd }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      loop:
+        - { name: 'fastapi', desc: 'AIOps API', cmd: "{{ venv_path }}/bin/uvicorn main:app --host 0.0.0.0 --port 8000" }
+        - { name: 'healer', desc: 'AIOps Healer', cmd: "{{ venv_path }}/bin/python {{ project_dir }}/healer.py" }
+
+    - name: Start AIOps Services
+      systemd_service:
+        name: "{{ item }}"
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+      loop: [fastapi, healer]
+
+    # --- 5. Chaos Loop Setup ---
+    
+    - name: Create Chaos Deployment Manifest
+      copy:
+        dest: "{{ project_dir }}/chaos-deployment.yaml"
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: chaos-spike-generator
+            namespace: monitoring
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: chaos-worker
+            template:
+              metadata:
+                labels:
+                  app: chaos-worker
+              spec:
+                containers:
+                - name: stress
+                  image: polinux/stress-ng:latest
+                  args: ["--cpu", "2", "--timeout", "600s"]
+      
+    - name: Apply Chaos Deployment
+      become: no
+      shell: kubectl apply -f {{ project_dir }}/chaos-deployment.yaml
+      environment:
+        KUBECONFIG: "/home/ubuntu/.kube/config"
