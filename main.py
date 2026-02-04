@@ -58,3 +58,5 @@ async def detect_live():
         raise HTTPException(status_code=500, detail=f"AIOps Error: {str(e)}")
 
 @app.get("/health")
+def health():
+    return {"status": "ok", "model_loaded": model is not None}
