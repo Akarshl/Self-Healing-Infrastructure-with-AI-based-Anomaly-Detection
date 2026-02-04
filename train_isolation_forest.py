@@ -1,6 +1,8 @@
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 import matplotlib.pyplot as plt
+import joblib  # To save the model
+import os      # To create the models directory
 
 # 1. Load Data
 df = pd.read_csv("data/ec2_cpu_utilization_5f5533.csv")
