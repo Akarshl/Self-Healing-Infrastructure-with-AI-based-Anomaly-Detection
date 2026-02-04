@@ -115,8 +115,7 @@
           [Service]
           User=ubuntu
           WorkingDirectory={{ project_dir }}
-          # PYTHONUNBUFFERED=1 ensures logs appear in journalctl immediately
-          Environment="PATH={{ venv_path }}/bin"
+          Environment="PATH={{ venv_path }}/bin:/usr/local/bin:/usr/bin:/bin"
           Environment="PYTHONUNBUFFERED=1"
           Environment="KUBECONFIG=/home/ubuntu/.kube/config"
           ExecStart={{ item.cmd }}
