@@ -1,24 +1,19 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sklearn.ensemble import IsolationForest
+from prometheus_api_client import PrometheusConnect, parse_datetime
 import pandas as pd
 import joblib
 import os
 
-app = FastAPI(title="AIOps Anomaly Detection API")
+app = FastAPI(title="AIOps Real-Time Inference API")
 
-# Path to save/load your model
+# 1. PROMETHEUS CONFIGURATION
+# This is the internal DNS name created by your Helm chart
+PROMETHEUS_URL = "http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090"
+prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
+
 MODEL_PATH = "models/iso_forest.joblib"
-
-# Define the data structure for incoming requests
-class MetricPoint(BaseModel):
-    timestamp: str
-    value: float
-
-class MetricBatch(BaseModel):
-    metrics: list[MetricPoint]
-
-# Global model variable
 model = None
 
 @app.on_event("startup")
@@ -27,35 +22,47 @@ def load_model():
     if os.path.exists(MODEL_PATH):
         model = joblib.load(MODEL_PATH)
         print("Model loaded successfully.")
-    else:
-        # Fallback: Initialize and train a basic model if none exists
-        # In production, you would train this on your Kaggle/Prometheus baseline
-        print("No pre-trained model found. Initializing new model...")
-        model = IsolationForest(contamination=0.01, random_state=42)
 
-@app.post("/detect")
-async def detect_anomalies(batch: MetricBatch):
+@app.get("/detect/live")
+async def detect_live():
+    """ Fetches live metrics from Prometheus and runs anomaly detection """
     if model is None:
-        raise HTTPException(status_code=503, detail="Model not initialized")
-    
-    # Convert incoming JSON to DataFrame
-    data = pd.DataFrame([m.dict() for m in batch.metrics])
-    
-    # Run Inference
-    # predict() returns -1 for anomalies and 1 for normal data
-    preds = model.predict(data[['value']])
-    
-    anomalies = []
-    for i, pred in enumerate(preds):
-        if pred == -1:
-            anomalies.append(batch.metrics[i])
-            
-    return {
-        "total_processed": len(batch.metrics),
-        "anomalies_found": len(anomalies),
-        "anomalies": anomalies
-    }
+        raise HTTPException(status_code=503, detail="Model not loaded")
+
+    try:
+        # Fetch last 1 hour of CPU Rate data
+        # 'sum(rate(node_cpu_seconds_total[5m]))' gives us the average CPU usage
+        metric_data = prom.get_metric_range_data(
+            metric_name="sum(rate(node_cpu_seconds_total[5m]))",
+            start_time=parse_datetime("1h"),
+            end_time=parse_datetime("now")
+        )
+
+        if not metric_data:
+            return {"message": "No metrics found in Prometheus for the last hour"}
+
+        # Convert Prometheus format to DataFrame
+        # Prometheus returns [timestamp, value]
+        values = metric_data[0]['values']
+        df = pd.DataFrame(values, columns=['timestamp', 'value'])
+        df['value'] = df['value'].astype(float)
+
+        # Run Inference
+        df['anomaly'] = model.predict(df[['value']])
+        
+        # Filter for anomalies (-1)
+        anomalies = df[df['anomaly'] == -1]
+
+        return {
+            "status": "success",
+            "data_points_analyzed": len(df),
+            "anomalies_detected": len(anomalies),
+            "anomalies": anomalies[['timestamp', 'value']].to_dict(orient='records')
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error connecting to Prometheus: {str(e)}")
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok", "model_loaded": model is not None}
+def health():
+    return {"status": "ok"}
