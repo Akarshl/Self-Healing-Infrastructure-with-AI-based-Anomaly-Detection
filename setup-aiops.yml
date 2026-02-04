@@ -89,7 +89,7 @@
 
     - name: Setup Python Virtual Environment and Install ML libraries
       pip:
-        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib]
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client, prophet]
         virtualenv: "{{ venv_path }}"
         virtualenv_command: "/usr/bin/python3 -m venv"
 
