@@ -89,7 +89,7 @@
 
     - name: Setup Python Virtual Environment and Install ML libraries
       pip:
-        name: [pandas, scikit-learn, joblib, fastapi, uvicorn]
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib]
         virtualenv: "{{ venv_path }}"
         virtualenv_command: "/usr/bin/python3 -m venv"
 
@@ -125,3 +125,12 @@
         state: restarted
         enabled: yes
         daemon_reload: yes
+
+    - name: Wait for API to become healthy
+      uri:
+        url: "http://localhost:8000/health"
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 5
+      delay: 5
