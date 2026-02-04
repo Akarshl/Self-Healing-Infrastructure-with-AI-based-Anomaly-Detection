@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sklearn.ensemble import IsolationForest
-from prometheus_api_client import PrometheusConnect, parse_datetime
+from prometheus_api_client import PrometheusConnect
+from prometheus_api_client.utils import parse_datetime
 import pandas as pd
 import joblib
 import os
