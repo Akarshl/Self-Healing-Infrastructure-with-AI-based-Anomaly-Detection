@@ -89,6 +89,7 @@
       pip:
         name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client]
         virtualenv: "{{ venv_path }}"
+        virtualenv_command: "/usr/bin/python3 -m venv"
 
     - name: Execute Model Training
       become: no
