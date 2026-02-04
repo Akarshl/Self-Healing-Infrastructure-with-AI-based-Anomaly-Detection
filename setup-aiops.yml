@@ -1,40 +1,46 @@
 ---
-- name: Configure AIOps Platform and Deploy FastAPI
+- name: End-to-End AIOps Platform Deployment
   hosts: all
   become: yes
   vars:
-    # Infrastructure Versions
+    # Infrastructure & Observability Versions
     loki_chart_version: "2.9.11"
     prometheus_chart_version: "45.7.1"
     loki_image_tag: "2.9.3"
     
-    # Project Paths
+    # Project Structure
     project_dir: "/home/ubuntu/aiops-project"
     venv_path: "{{ project_dir }}/venv"
     csv_filename: "ec2_cpu_utilization_5f5533.csv"
 
   tasks:
-    # 1. System Dependencies & Python Setup
-    - name: Install system packages
+    # 1. SYSTEM PREPARATION
+    - name: Install system dependencies
       apt:
         name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip, python3-venv]
         update_cache: yes
 
-    - name: Create project directory
+    - name: Create project directories
       file:
-        path: "{{ project_dir }}/data"
+        path: "{{ item }}"
         state: directory
         owner: ubuntu
         group: ubuntu
+      loop:
+        - "{{ project_dir }}/data"
+        - "{{ project_dir }}/models"
 
-    # 2. Kubernetes Setup (K3s & Helm)
-    - name: Install K3s
+    # 2. KUBERNETES & TOOLS
+    - name: Install K3s (Lightweight Kubernetes)
       shell: curl -sfL https://get.k3s.io | sh -
       args:
         creates: /usr/local/bin/k3s
 
-    # FIX: Enable non-root kubectl access
-    - name: Configure non-root kubectl access
+    - name: Wait for K3s to be ready
+      pause:
+        seconds: 20
+
+    - name: Enable non-root kubectl access
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
@@ -48,62 +54,67 @@
       args:
         creates: /usr/local/bin/helm
 
-    # 3. Observability Stack (Loki & Prometheus)
-    - name: Add Helm Repos and Install Stack
+    # 3. OBSERVABILITY STACK
+    - name: Configure Helm Repos and Install Monitoring
       become: no
       shell: |
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
         
+        # Install Prometheus with Grafana Datasource Sidecar
         helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
           --namespace monitoring --create-namespace --version {{ prometheus_chart_version }} \
           --set grafana.sidecar.datasources.enabled=true \
           --set grafana.sidecar.datasources.label=grafana_datasource
           
+        # Install Loki with fixed version for compatibility
         helm upgrade --install loki grafana/loki-stack \
           --namespace monitoring --version {{ loki_chart_version }} \
           --set loki.image.tag={{ loki_image_tag }} --set promtail.enabled=true
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    # 4. ML Assets & Python Dependencies
-    - name: Copy Kaggle CSV from local repository
+    # 4. ML ASSETS & TRAINING
+    - name: Copy project assets from Git repository
       copy:
-        src: "./{{ csv_filename }}"
-        dest: "{{ project_dir }}/data/{{ csv_filename }}"
+        src: "./{{ item.src }}"
+        dest: "{{ project_dir }}/{{ item.dest }}"
         owner: ubuntu
         group: ubuntu
+      loop:
+        - { src: "{{ csv_filename }}", dest: "data/{{ csv_filename }}" }
+        - { src: "train_isolation_forest.py", dest: "train_isolation_forest.py" }
+        - { src: "main.py", dest: "main.py" }
 
-    - name: Install Python ML packages in virtualenv
+    - name: Setup Python Virtual Environment and Install ML libraries
       pip:
         name: [pandas, scikit-learn, joblib, fastapi, uvicorn]
         virtualenv: "{{ venv_path }}"
         virtualenv_command: "/usr/bin/python3 -m venv"
-      #
 
-    # 5. FastAPI Service Deployment
-    - name: Deploy FastAPI Application Script
-      copy:
-        dest: "{{ project_dir }}/main.py"
-        src: "./main.py" # Assumes your script is in your git repo
-        owner: ubuntu
-        group: ubuntu
+    - name: Train the Isolation Forest model
+      become: no
+      shell: "{{ venv_path }}/bin/python {{ project_dir }}/train_isolation_forest.py"
+      args:
+        chdir: "{{ project_dir }}"
+      # This generates models/iso_forest.joblib for inference
 
-    - name: Create Systemd service for FastAPI
+    # 5. PRODUCTION API DEPLOYMENT
+    - name: Configure Systemd service for FastAPI
       copy:
         dest: /etc/systemd/system/fastapi.service
         content: |
           [Unit]
-          Description=Gunicorn instance to serve FastAPI
+          Description=AIOps Inference API (FastAPI)
           After=network.target
 
           [Service]
           User=ubuntu
-          Group=ubuntu
           WorkingDirectory={{ project_dir }}
           Environment="PATH={{ venv_path }}/bin"
           ExecStart={{ venv_path }}/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+          Restart=always
 
           [Install]
           WantedBy=multi-user.target
@@ -114,4 +125,3 @@
         state: restarted
         enabled: yes
         daemon_reload: yes
-      #
