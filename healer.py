@@ -5,8 +5,9 @@ import os
 
 # Configuration
 API_URL = "http://localhost:8000/detect/live"
-CHECK_INTERVAL = 15  # Wait 15s between checks to allow Prometheus to update
+CHECK_INTERVAL = 15 
 KUBECONFIG = "/home/ubuntu/.kube/config"
+KUBECTL_PATH = "/usr/local/bin/kubectl"
 
 def heal():
     print("--- AIOps Remediation Engine Started ---")
@@ -17,15 +18,16 @@ def heal():
             response = requests.get(API_URL, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                anomalies = data.get("anomalies_detected", 0)
+                
+                # FIXED: Access the nested summary dictionary
+                summary = data.get("summary", {})
+                anomalies = summary.get("anomalies_found", 0)
                 
                 if anomalies > 0:
-                    print(f"!!! ALERT: {anomalies} anomalies detected. Triggering Healing...")
+                    print(f"!!! ALERT: {anomalies} anomalies detected by AI. Triggering Healing...")
                     
-                    # ACTION: Delete pods by label selector (app=chaos-worker)
-                    # The Deployment will automatically recreate these pods.
                     result = subprocess.run(
-                        ["kubectl", "delete", "pods", "-l", "app=chaos-worker", "-n", "monitoring", "--now"],
+                        [KUBECTL_PATH, "delete", "pods", "-l", "app=chaos-worker", "-n", "monitoring", "--now"],
                         capture_output=True, text=True
                     )
                     
@@ -34,7 +36,8 @@ def heal():
                     else:
                         print(f"REMEDIATION ERROR: {result.stderr}")
                 else:
-                    print("Status: Cluster Healthy.")
+                    current_usage = summary.get("current_usage", 0)
+                    print(f"Status: Cluster Healthy. (Current Load: {current_usage:.2f})")
             else:
                 print(f"API Error: {response.status_code}")
 
