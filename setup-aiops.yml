@@ -92,7 +92,7 @@
 
     - name: Install ML Libraries
       pip:
-        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client]
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client, streamlit, plotly]
         virtualenv: "{{ venv_path }}"
         virtualenv_command: "/usr/bin/python3 -m venv"
 
