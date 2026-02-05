@@ -74,6 +74,7 @@
         group: ubuntu
       loop:
         - { src: "main.py", dest: "main.py" }
+        - { src: "dashboard.py", dest: "dashboard.py" }
         - { src: "train_isolation_forest.py", dest: "train_isolation_forest.py" }
         - { src: "healer.py", dest: "healer.py" }
         - { src: "{{ csv_filename }}", dest: "data/{{ csv_filename }}" }
