@@ -4,15 +4,15 @@ from prometheus_api_client import PrometheusConnect
 import pandas as pd
 import joblib
 import os
+from datetime import datetime
 
 app = FastAPI(title="AIOps Real-Time Inference API")
 
 # 1. PROMETHEUS CONFIGURATION
-# Ansible will automatically replace this URL with the correct NodePort
 PROMETHEUS_URL = "http://localhost:30206"
 prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
 
-# Ansible will replace this with the absolute path
+# 2. MODEL CONFIGURATION
 MODEL_PATH = "/home/ubuntu/aiops-project/models/iso_forest.joblib"
 model = None
 
@@ -25,33 +25,46 @@ def load_model():
 
 @app.get("/detect/live")
 async def detect_live():
-    """ Fetches live metrics via PromQL subquery and runs anomaly detection """
+    """ Fetches metrics, runs inference, and returns rich data for the dashboard """
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
     try:
-        # 2. PROMETHEUS SUBQUERY FIX
-        # Fetches 1 hour of data at 1-minute resolution
-        query = "sum(rate(node_cpu_seconds_total[5m]))[1h:1m]"
+        # Fetch 30 minutes of data at 30-second resolution for a smoother graph
+        query = "sum(rate(node_cpu_seconds_total[1m]))[30m:30s]"
         result = prom.custom_query(query=query)
 
         if not result:
-            return {"message": "No data found"}
+            return {"status": "error", "message": "No data found"}
 
-        # 3. DATA EXTRACTION
+        # 3. DATA EXTRACTION & PREPROCESSING
         values = result[0]['values']
         df = pd.DataFrame(values, columns=['timestamp', 'value'])
         df['value'] = df['value'].astype(float)
+        
+        # Convert Unix timestamp to readable format for the dashboard
+        df['time_formatted'] = df['timestamp'].apply(
+            lambda x: datetime.fromtimestamp(float(x)).strftime('%H:%M:%S')
+        )
 
-        # 4. INFERENCE
-        df['anomaly'] = model.predict(df[['value']])
-        anomalies = df[df['anomaly'] == -1]
+        # 4. INFERENCE (Isolation Forest)
+        # -1 = Anomaly, 1 = Normal
+        df['is_anomaly'] = model.predict(df[['value']])
+        
+        # Filter for the Healer
+        anomalies_df = df[df['is_anomaly'] == -1]
 
         return {
             "status": "success",
-            "data_points_analyzed": len(df),
-            "anomalies_detected": len(anomalies),
-            "anomalies": anomalies[['timestamp', 'value']].to_dict(orient='records')
+            "summary": {
+                "total_points": len(df),
+                "anomalies_found": len(anomalies_df),
+                "current_usage": df['value'].iloc[-1]
+            },
+            # 'all_metrics' used by Streamlit Dashboard
+            "all_metrics": df[['time_formatted', 'value', 'is_anomaly']].to_dict(orient='records'),
+            # 'anomalies' used by Healer Script
+            "anomalies": anomalies_df[['timestamp', 'value']].to_dict(orient='records')
         }
 
     except Exception as e:
@@ -59,4 +72,4 @@ async def detect_live():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": model is not None}
+    return {"status": "ok", "model_loaded": model is not None, "prometheus_connected": prom.check_prometheus_connection()}
