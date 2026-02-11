@@ -161,7 +161,7 @@
                 containers:
                 - name: stress
                   image: polinux/stress-ng:latest
-                  args: ["--cpu", "2", "--timeout", "600s"]
+                  args: ["--cpu", "2", "--vm", "1", "--vm-bytes", "512M", "--timeout", "600s"]
       
     - name: Apply Chaos Deployment
       become: no
