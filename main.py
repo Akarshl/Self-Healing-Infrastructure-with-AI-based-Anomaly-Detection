@@ -15,7 +15,6 @@ logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 app = FastAPI(title="AIOps Intelligent Inference Engine")
 
 # 1. PROMETHEUS CONFIGURATION
-# Note: The NodePort 30206 is handled by your Ansible 'replace' task
 PROMETHEUS_URL = "http://localhost:30206"
 prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
 
@@ -110,7 +109,7 @@ async def predict_disk():
     """Predicts days remaining until disk exhaustion (Critical for storage management)"""
     try:
         # Calculate Percentage Used: (1 - Avail/Size) * 100
-        query = '(1 - (node_filesystem_avail_bytes{device=~"/dev/.*"} / node_filesystem_size_bytes{device=~"/dev/.*"})) * 100'
+        query = '(node_filesystem_size_bytes{device="/dev/root"} - node_filesystem_avail_bytes{device="/dev/root"}) / node_filesystem_size_bytes{device="/dev/root"} * 100'
         # Disk moves slowly, so we look at the last 24 hours
         result = prom.custom_query(query=query + "[24h:15m]")
         
