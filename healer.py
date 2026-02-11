@@ -15,42 +15,39 @@ def heal():
 
     while True:
         try:
-            # --- 1. CPU REACTION (Isolation Forest) ---
+            # 1. CPU REACTION (Isolation Forest)
             cpu_res = requests.get(f"{API_BASE}/detect/live", timeout=5)
             if cpu_res.status_code == 200:
                 cpu_data = cpu_res.json()
                 summary = cpu_data.get("summary", {})
-                anomalies = summary.get("anomalies_found", 0)
-                
-                if anomalies > 0:
-                    print(f"!!! [CPU] {anomalies} anomalies detected. Killing anomalous pods...")
+                if summary.get("anomalies_found", 0) > 0:
+                    print(f"!!! [CPU] Anomaly detected ({summary['current_usage']}). Killing pods...")
                     subprocess.run([KUBECTL_PATH, "delete", "pods", "-l", "app=chaos-worker", "-n", "monitoring", "--now"])
                 else:
                     print(f"Status: CPU Healthy ({summary.get('current_usage', 0):.2f})")
 
-            # --- 2. MEMORY PREDICTION (Prophet) ---
+            # 2. MEMORY PREDICTION (Prophet)
             mem_res = requests.get(f"{API_BASE}/predict/memory", timeout=10)
             if mem_res.status_code == 200:
                 mem_data = mem_res.json()
-                current = mem_data.get("current_val_mb", 0)
-                predicted = mem_data.get("predicted_val_2h_mb", 0)
+                curr = mem_data.get("current_val_mb", 0)
+                pred = mem_data.get("predicted_val_2h_mb", 0)
                 
-                # If memory is predicted to grow by more than 20% in 2 hours (Potential Leak)
-                if predicted > (current * 1.2) and current > 0:
-                    print(f"🔮 [MEMORY] Predictive Alert: Leak Detected ({current}MB -> {predicted}MB). Restarting Deployment...")
+                # If memory is predicted to grow >25% in 2 hours
+                if pred > (curr * 1.25) and curr > 0:
+                    print(f"🔮 [MEMORY] Predictive Alert: Leak detected ({curr}MB -> {pred}MB). Restarting Deployment...")
                     subprocess.run([KUBECTL_PATH, "rollout", "restart", "deployment/chaos-spike-generator", "-n", "monitoring"])
 
-            # --- 3. DISK CAPACITY (Prophet) ---
+            # 3. DISK CAPACITY (Prophet)
             disk_res = requests.get(f"{API_BASE}/predict/disk", timeout=10)
             if disk_res.status_code == 200:
                 disk_data = disk_res.json()
                 eta = disk_data.get("days_until_90_percent", "")
-                # If the ETA contains "0." it means less than 24 hours remain
-                if "0." in str(eta):
-                    print(f"⚠️ [DISK] CRITICAL: Storage predicted to hit 90% in {eta}. Log cleanup required.")
+                if "0." in str(eta): # Less than 1 day remains
+                    print(f"⚠️ [DISK] CRITICAL: Storage predicted full in {eta}. Cleanup triggered.")
 
         except Exception as e:
-            print(f"⚠️ Connection/Logic Error: {e}")
+            print(f"⚠️ Healer Loop Error: {e}")
             
         time.sleep(CHECK_INTERVAL)
 
