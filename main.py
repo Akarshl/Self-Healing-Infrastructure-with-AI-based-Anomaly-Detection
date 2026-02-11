@@ -15,10 +15,12 @@ logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 app = FastAPI(title="AIOps Intelligent Inference Engine")
 
 # 1. PROMETHEUS CONFIGURATION
-PROMETHEUS_URL = "http://localhost:30206"
+# Locked to 31173 via Ansible automation
+PROMETHEUS_URL = "http://localhost:31173"
 prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
 
 # 2. MODEL PATHS
+# Path is managed by Ansible to be absolute
 ISO_MODEL_PATH = "/home/ubuntu/aiops-project/models/iso_forest.joblib"
 iso_model = None
 
@@ -29,15 +31,15 @@ def load_models():
         iso_model = joblib.load(ISO_MODEL_PATH)
         print(f"✅ Isolation Forest loaded from {ISO_MODEL_PATH}")
 
-# --- 1. REACTIVE: CPU ANOMALY DETECTION (For Healer & Dashboard) ---
+# --- 1. REACTIVE: CPU ANOMALY DETECTION (Isolation Forest) ---
 @app.get("/detect/live")
 async def detect_live():
-    """Logic remains identical to current working version to ensure Healer doesn't break"""
+    """Fetches real-time CPU metrics for anomaly detection and remediation"""
     if iso_model is None:
         raise HTTPException(status_code=503, detail="Isolation Forest model not loaded")
 
     try:
-        # 30m window for CPU is ideal for detecting sudden spikes
+        # Window for CPU spikes
         query = "sum(rate(node_cpu_seconds_total[1m]))[30m:30s]"
         result = prom.custom_query(query=query)
 
@@ -50,7 +52,7 @@ async def detect_live():
             lambda x: datetime.fromtimestamp(float(x)).strftime('%H:%M:%S')
         )
 
-        # Inference: -1 for anomaly, 1 for normal
+        # Inference: -1 = Anomaly, 1 = Normal
         df['is_anomaly'] = iso_model.predict(df[['value']])
         anomalies_df = df[df['is_anomaly'] == -1]
 
@@ -70,9 +72,8 @@ async def detect_live():
 # --- 2. PREDICTIVE: MEMORY FORECASTING (Prophet) ---
 @app.get("/predict/memory")
 async def predict_memory():
-    """Forecasts memory leaks over the next 2 hours"""
+    """Predicts memory usage trends to identify slow leaks before OOM occurs"""
     try:
-        # Pull 6h of history to establish a trend
         query = "node_memory_Active_bytes"
         result = prom.custom_query(query=query + "[6h:5m]")
         
@@ -83,11 +84,11 @@ async def predict_memory():
         df['ds'] = pd.to_datetime(df['ds'], unit='s')
         df['y'] = df['y'].astype(float) / (1024 * 1024)  # MB
 
-        # Fit Prophet (Fast Mode)
+        # Fast Prophet fit
         m = Prophet(changepoint_prior_scale=0.01, yearly_seasonality=False, weekly_seasonality=False)
         m.fit(df)
 
-        # Predict 2 hours
+        # Forecast 2 hours
         future = m.make_future_dataframe(periods=24, freq='5min')
         forecast = m.predict(future)
 
@@ -106,11 +107,10 @@ async def predict_memory():
 # --- 3. PREDICTIVE: DISK CAPACITY FORECASTING (Prophet) ---
 @app.get("/predict/disk")
 async def predict_disk():
-    """Predicts days remaining until disk exhaustion (Critical for storage management)"""
+    """Forecasts disk exhaustion using NVMe/Root device metrics"""
     try:
-        # Calculate Percentage Used: (1 - Avail/Size) * 100
+        # Using the specific device identified via manual curl
         query = '(node_filesystem_size_bytes{device="/dev/root"} - node_filesystem_avail_bytes{device="/dev/root"}) / node_filesystem_size_bytes{device="/dev/root"} * 100'
-        # Disk moves slowly, so we look at the last 24 hours
         result = prom.custom_query(query=query + "[24h:15m]")
         
         if not result:
@@ -120,16 +120,14 @@ async def predict_disk():
         df['ds'] = pd.to_datetime(df['ds'], unit='s')
         df['y'] = df['y'].astype(float)
 
-        # Fit Prophet for long-term trend
         m = Prophet(changepoint_prior_scale=0.01, yearly_seasonality=False)
         m.fit(df)
 
-        # Predict 2 days into the future (hourly resolution)
+        # Forecast 2 days (hourly)
         future = m.make_future_dataframe(periods=48, freq='H')
         forecast = m.predict(future)
 
-        # Logic to estimate "Days until Full"
-        limit_hit = forecast[forecast['yhat'] >= 90] # Warning threshold 90%
+        limit_hit = forecast[forecast['yhat'] >= 90]
         days_remaining = "Safe (>2 days)"
         if not limit_hit.empty:
             eta = limit_hit['ds'].iloc[0]
