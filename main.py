@@ -75,7 +75,7 @@ async def predict_memory():
     """Predicts memory usage trends to identify slow leaks before OOM occurs"""
     try:
         query = "node_memory_Active_bytes"
-        result = prom.custom_query(query=query + "[6h:5m]")
+        result = prom.custom_query(query=query + "[15m:1m]")
         
         if not result:
             return {"status": "error", "message": "No memory data found"}
@@ -111,7 +111,7 @@ async def predict_disk():
     try:
         # Using the specific device identified via manual curl
         query = '(node_filesystem_size_bytes{device="/dev/root"} - node_filesystem_avail_bytes{device="/dev/root"}) / node_filesystem_size_bytes{device="/dev/root"} * 100'
-        result = prom.custom_query(query=query + "[24h:15m]")
+        result = prom.custom_query(query=query + "[30m:5m]")
         
         if not result:
             return {"status": "error", "message": "No disk data found"}
