@@ -4,9 +4,8 @@
   become: yes
   vars:
     # Infrastructure Versions
-    loki_chart_version: "2.9.11"
     prometheus_chart_version: "45.7.1"
-    loki_image_tag: "2.9.3"
+    locked_nodeport: 31173
     
     # Project Structure
     project_dir: "/home/ubuntu/aiops-project"
@@ -43,7 +42,7 @@
       args:
         creates: /home/ubuntu/.kube/config
 
-    # --- 2. Observability & Connectivity FIX ---
+    # --- 2. Observability & Port Locking ---
     
     - name: Install Helm and Monitoring Stack
       become: no
@@ -55,12 +54,10 @@
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
-    - name: Patch Prometheus to NodePort and Get Port (Sanitized)
+    - name: Permanently Lock Prometheus NodePort to {{ locked_nodeport }}
       become: no
       shell: |
-        kubectl patch svc prometheus-kube-prometheus-prometheus -n monitoring -p '{"spec":{"type":"NodePort"}}' > /dev/null
-        kubectl get svc prometheus-kube-prometheus-prometheus -n monitoring -o jsonpath='{.spec.ports[0].nodePort}'
-      register: prometheus_nodeport
+        kubectl patch svc prometheus-kube-prometheus-prometheus -n monitoring -p '{"spec":{"type":"NodePort","ports":[{"name":"http-web","port":9090,"nodePort":{{ locked_nodeport }}} ]}}'
       environment:
         KUBECONFIG: "/home/ubuntu/.kube/config"
 
@@ -79,33 +76,30 @@
         - { src: "healer.py", dest: "healer.py" }
         - { src: "{{ csv_filename }}", dest: "data/{{ csv_filename }}" }
 
-    - name: Automate Fix for main.py (Inject NodePort Safely)
+    - name: Configure main.py with Locked Port and Absolute Model Path
       replace:
         path: "{{ project_dir }}/main.py"
-        regexp: '^PROMETHEUS_URL = .*'
-        replace: 'PROMETHEUS_URL = "http://localhost:{{ prometheus_nodeport.stdout | trim }}"'
+        regexp: "{{ item.regexp }}"
+        replace: "{{ item.replace }}"
+      loop:
+        - { regexp: '^PROMETHEUS_URL = .*', replace: 'PROMETHEUS_URL = "http://localhost:{{ locked_nodeport }}"' }
+        - { regexp: '^ISO_MODEL_PATH = .*', replace: 'ISO_MODEL_PATH = "{{ project_dir }}/models/iso_forest.joblib"' }
 
-    - name: Update MODEL_PATH to Absolute in main.py
-      replace:
-        path: "{{ project_dir }}/main.py"
-        regexp: '^MODEL_PATH = .*'
-        replace: 'MODEL_PATH = "{{ project_dir }}/models/iso_forest.joblib"'
-
-    - name: Install ML Libraries
+    - name: Install ML Libraries (Isolation Forest + Prophet)
       pip:
-        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, matplotlib, prometheus-api-client, streamlit, plotly, prophet]
+        name: [pandas, scikit-learn, joblib, fastapi, uvicorn, prometheus-api-client, streamlit, plotly, prophet]
         virtualenv: "{{ venv_path }}"
         virtualenv_command: "/usr/bin/python3 -m venv"
 
-    - name: Execute Model Training
+    - name: Execute Model Training (Isolation Forest)
       become: no
       shell: "{{ venv_path }}/bin/python {{ project_dir }}/train_isolation_forest.py"
       args:
         chdir: "{{ project_dir }}"
 
-    # --- 4. Deployment of Services (API & Healer) ---
+    # --- 4. Deployment of Services ---
     
-    - name: Deploy Systemd Services
+    - name: Deploy Systemd Services (API, Healer, Dashboard)
       copy:
         dest: "/etc/systemd/system/{{ item.name }}.service"
         content: |
@@ -137,9 +131,9 @@
         daemon_reload: yes
       loop: [fastapi, healer, dashboard]
 
-    # --- 5. Chaos Loop Setup ---
+    # --- 5. Multi-Vector Chaos Setup ---
     
-    - name: Create Chaos Deployment Manifest
+    - name: Create Chaos Deployment (CPU + Memory Stress)
       copy:
         dest: "{{ project_dir }}/chaos-deployment.yaml"
         content: |
@@ -161,6 +155,7 @@
                 containers:
                 - name: stress
                   image: polinux/stress-ng:latest
+                  # Creates 2 CPU core stress AND 512MB Memory leak pattern
                   args: ["--cpu", "2", "--vm", "1", "--vm-bytes", "512M", "--timeout", "600s"]
       
     - name: Apply Chaos Deployment
