@@ -55,20 +55,38 @@ while True:
 
             # --- DISK SECTION ---
             st.divider()
-            st.subheader("💾 Disk Capacity Trend")
+            st.subheader("💾 Disk Capacity & Self-Healing")
             disk_res = requests.get(f"{API_BASE}/predict/disk", timeout=10).json()
+            
             if disk_res['status'] == 'success':
                 d_df = pd.DataFrame(disk_res['forecast'])
+                # Format time for the X-axis
                 d_df['time_short'] = pd.to_datetime(d_df['ds']).dt.strftime('%H:%M')
-                st.write(f"Usage: **{disk_res['current_usage_percent']}%** | ETA 90%: **{disk_res['days_until_90_percent']}**")
+                
+                st.write(f"Usage: **{disk_res['current_usage_percent']}%** | Status: **{disk_res['days_until_90_percent']}**")
                 
                 fig_disk = go.Figure()
-                fig_disk.add_trace(go.Scatter(x=d_df['time_short'], y=d_df['yhat'], name='Usage Trend', line=dict(color='#ffa500')))
-                fig_disk.add_hline(y=90, line_dash="dot", line_color="red")
+                # 1. THE YELLOW FORECAST LINE
+                fig_disk.add_trace(go.Scatter(x=d_df['time_short'], y=d_df['yhat'], name='Prophet Forecast', line=dict(color='yellow', dash='dash')))
+                
+                # 2. THE RESTART MARKER (Orange Triangle)
+                # If usage is high or growing fast, show the "CLEANUP" marker
+                if disk_res['current_usage_percent'] > 70:
+                    fig_disk.add_trace(go.Scatter(
+                        x=[d_df['time_short'].iloc[-1]], 
+                        y=[d_df['yhat'].iloc[-1]],
+                        mode='markers+text',
+                        name='DISK CLEANUP',
+                        text=["RESTART/CLEANUP"],
+                        textposition="top center",
+                        marker=dict(color='orange', size=12, symbol='triangle-up')
+                    ))
+            
+                fig_disk.add_hline(y=90, line_dash="dot", line_color="red", annotation_text="Critical Limit")
                 fig_disk.update_layout(template="plotly_dark", yaxis_range=[0, 100])
-                st.plotly_chart(fig_disk, use_container_width=True, key="disk_viz_final_stable")
+                st.plotly_chart(fig_disk, use_container_width=True, key="disk_viz_instant")
             else:
-                st.info("Collecting historical disk metrics for forecast... (Needs 30m of data)")
+                st.info("Syncing Disk Metrics... Graph will appear shortly.")
 
     except Exception as e:
         st.info(f"Syncing AIOps Data... ({e})")
