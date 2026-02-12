@@ -166,16 +166,21 @@
                   image: ubuntu
                   command: ["/bin/sh", "-c"]
                   args:
-                    - while true; do
-                        dd if=/dev/zero of=/data/leak-$(date +%s).img bs=1M count=100;
-                        sleep 30;
+                    - |
+                      while true; do
+                        # Reduced from 100M to 20M to give the AI more time to react
+                        dd if=/dev/zero of=/data/leak-$(date +%s).img bs=1M count=20;
+                        # Increased sleep to prevent rapid disk exhaustion
+                        sleep 60;
+                        # Self-cleanup logic: Keep only the last 3 leak files
+                        ls -t /data/leak-*.img | tail -n +4 | xargs -r rm;
                       done
                   resources:
                     requests:
-                      ephemeral-storage: "500Mi"
+                      ephemeral-storage: "200Mi"
                     limits:
-                      # This limit covers both the /data volume and the container logs
-                      ephemeral-storage: "1.5Gi"
+                      # Lowered limit to trigger pod-level eviction BEFORE node-level crash
+                      ephemeral-storage: "800Mi"
                   volumeMounts:
                   - name: data-volume
                     mountPath: /data
