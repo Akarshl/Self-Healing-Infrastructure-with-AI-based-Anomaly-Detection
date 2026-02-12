@@ -6,9 +6,9 @@ import pandas as pd
 import joblib
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# Suppress Prophet's technical output
+# Suppress technical output
 logging.getLogger('prophet').setLevel(logging.WARNING)
 logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 
@@ -58,7 +58,7 @@ async def detect_live():
 async def predict_memory():
     try:
         query = "node_memory_Active_bytes"
-        result = prom.custom_query(query=query + "[6h:5m]")
+        result = prom.custom_query(query=query + "[10m:30s]")
         if not result: return {"status": "error", "message": "No data"}
 
         df = pd.DataFrame(result[0]['values'], columns=['ds', 'y'])
@@ -84,8 +84,9 @@ async def predict_memory():
 @app.get("/predict/disk")
 async def predict_disk():
     try:
-        query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"} * 100)'
-        result = prom.custom_query(query=query + "[24h:15m]")
+        # UNIVERSAL QUERY: Targets root mountpoint to ensure data is found on EC2
+        query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"}) * 100'
+        result = prom.custom_query(query=query + "[10m:30s]")
         if not result: return {"status": "error", "message": "No data"}
 
         df = pd.DataFrame(result[0]['values'], columns=['ds', 'y'])
