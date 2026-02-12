@@ -153,12 +153,10 @@
                   app: chaos-worker
               spec:
                 containers:
-                # --- Container 1: CPU & Memory Stress ---
                 - name: cpu-mem-stress
                   image: polinux/stress-ng:latest
                   args: ["--cpu", "2", "--vm", "1", "--vm-bytes", "512M", "--timeout", "600s"]
                 
-                # --- Container 2: Disk Leak ---
                 - name: disk-leak
                   image: ubuntu
                   command: ["/bin/sh", "-c"]
