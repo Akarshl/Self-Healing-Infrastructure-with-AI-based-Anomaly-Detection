@@ -24,8 +24,7 @@ while True:
                 if not anoms.empty:
                     fig_cpu.add_trace(go.Scatter(x=anoms['time_formatted'], y=anoms['value'], mode='markers', name='Anomaly', marker=dict(color='red', size=10, symbol='x')))
                 fig_cpu.update_layout(template="plotly_dark")
-                # Using unique key to prevent flicker
-                st.plotly_chart(fig_cpu, width='stretch', key="cpu_viz_final")
+                st.plotly_chart(fig_cpu, width='stretch', key="cpu_viz_final_stable")
         except: st.warning("Connecting to CPU API...")
 
         # --- 2. MEMORY SECTION ---
@@ -36,24 +35,25 @@ while True:
             if mem_res['status'] == 'success':
                 f_df = pd.DataFrame(mem_res['forecast'])
                 fig_mem = go.Figure()
+                # Yellow Forecast Line
                 fig_mem.add_trace(go.Scatter(x=f_df['time_formatted'], y=f_df['yhat'], name='Forecast', line=dict(color='yellow', dash='dash')))
                 
-                # Predictive Restart Marker
+                # Independent RESTART Marker
                 if mem_res['predicted_val_2h_mb'] > (mem_res['current_val_mb'] * 1.2):
                     fig_mem.add_trace(go.Scatter(
                         x=[f_df['time_formatted'].iloc[-1]], 
                         y=[f_df['yhat'].iloc[-1]], 
                         mode='markers+text', 
                         text=["RESTART"], 
-                        name="Restart Marker", 
+                        name="Memory Remediation", 
                         textposition="top center",
                         marker=dict(color='orange', size=12, symbol='triangle-up')
                     ))
                 fig_mem.update_layout(template="plotly_dark")
-                st.plotly_chart(fig_mem, width='stretch', key="mem_viz_final")
+                st.plotly_chart(fig_mem, width='stretch', key="mem_viz_final_stable")
         except: st.info("Calculating Memory Forecast...")
 
-        # --- 3. DISK SECTION (Mirroring Memory Logic) ---
+        # --- 3. DISK SECTION ---
         st.divider()
         st.subheader("💾 Disk Capacity Trend")
         try:
@@ -66,22 +66,22 @@ while True:
                 # Yellow Forecast Line
                 fig_disk.add_trace(go.Scatter(x=d_df['time_fmt'], y=d_df['yhat'], name='Usage Forecast', line=dict(color='yellow', dash='dash')))
                 
-                # ADDED: CLEANUP MARKER (Logic matches healer.py thresholds)
+                # Independent CLEANUP Marker
                 if disk_res['current_usage_percent'] > 70:
                     fig_disk.add_trace(go.Scatter(
                         x=[d_df['time_fmt'].iloc[-1]], 
                         y=[d_df['yhat'].iloc[-1]], 
                         mode='markers+text', 
                         text=["CLEANUP"], 
-                        name="Cleanup Marker", 
+                        name="Disk Remediation", 
                         textposition="top center",
                         marker=dict(color='orange', size=12, symbol='triangle-up')
                     ))
                 
                 fig_disk.update_layout(template="plotly_dark", yaxis_range=[0, 100])
-                st.plotly_chart(fig_disk, width='stretch', key="disk_viz_final")
+                st.plotly_chart(fig_disk, width='stretch', key="disk_viz_final_stable")
             else: st.info(f"Disk Data Status: {disk_res.get('message')}")
         except: st.info("Establishing Disk Trend...")
 
-    # Increased sleep to 40s to reduce CPU load on m7i-flex baseline
+    # Sleep increased to allow m7i-flex baseline CPU recovery
     time.sleep(40)
