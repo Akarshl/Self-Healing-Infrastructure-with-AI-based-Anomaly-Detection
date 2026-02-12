@@ -8,6 +8,7 @@ import os
 import logging
 from datetime import datetime
 
+# Suppress Prophet's technical output for a cleaner console
 logging.getLogger('prophet').setLevel(logging.WARNING)
 logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 
@@ -42,7 +43,7 @@ async def detect_live():
         df['value'] = df['value'].astype(float)
         df['time_formatted'] = df['timestamp'].apply(lambda x: datetime.fromtimestamp(float(x)).strftime('%H:%M:%S'))
         df['is_anomaly'] = iso_model.predict(df[['value']])
-        
+
         return {
             "status": "success",
             "summary": {"current_usage": round(df['value'].iloc[-1], 4), "anomalies_found": len(df[df['is_anomaly'] == -1])},
@@ -77,28 +78,36 @@ async def predict_memory():
 @app.get("/predict/disk")
 async def predict_disk():
     try:
-        # Aggregated query targeting the root filesystem for EC2 stability
-        query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"} * 100)'
-        result = prom.custom_query(query=query + "[10m:30s]")
+        # Instant vector query to calculate current percentage
+        instant_query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"}) * 100'
+        # Apply the range to the result for Prophet ingestion
+        result = prom.custom_query(query=f'({instant_query})[10m:30s]')
+
         if not result: return {"status": "error", "message": "No data"}
+
         df = pd.DataFrame(result[0]['values'], columns=['ds', 'y'])
         df['ds'] = pd.to_datetime(df['ds'], unit='s')
         df['y'] = df['y'].astype(float)
+
         m = Prophet(changepoint_prior_scale=0.01, yearly_seasonality=False)
         m.fit(df)
-        future = m.make_future_dataframe(periods=48, freq='H')
+
+        future = m.make_future_dataframe(periods=24, freq='5min')
         forecast = m.predict(future)
+
         limit_hit = forecast[forecast['yhat'] >= 90]
         days = "Safe (>2 days)"
         if not limit_hit.empty:
             days = f"{round((limit_hit['ds'].iloc[0] - datetime.now()).total_seconds() / 86400, 1)} days"
+
         return {
             "status": "success",
             "current_usage_percent": round(df['y'].iloc[-1], 2),
             "days_until_90_percent": days,
             "forecast": forecast[['ds', 'yhat']].tail(48).to_dict(orient='records')
         }
-    except Exception as e: return {"status": "error", "message": str(e)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/health")
 def health():
