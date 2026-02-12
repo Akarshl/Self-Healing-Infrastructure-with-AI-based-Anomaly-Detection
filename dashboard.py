@@ -29,7 +29,7 @@ while True:
 
             # --- MEMORY SECTION (With Yellow Line and Restart Markers) ---
             st.divider()
-            st.subheader("🧠 Memory Forecast (Yellow Line)")
+            st.subheader("🧠 Memory Forecast")
             mem_res = requests.get(f"{API_BASE}/predict/memory", timeout=10).json()
             if mem_res['status'] == 'success':
                 f_df = pd.DataFrame(mem_res['forecast'])
