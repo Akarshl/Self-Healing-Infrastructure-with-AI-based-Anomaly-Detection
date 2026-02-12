@@ -8,14 +8,13 @@ import os
 import logging
 from datetime import datetime, timedelta
 
-# Suppress Prophet's technical output to keep logs clean
+# Suppress Prophet's technical output
 logging.getLogger('prophet').setLevel(logging.WARNING)
 logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 
 app = FastAPI(title="AIOps Intelligent Inference Engine")
 
 # 1. PROMETHEUS CONFIGURATION
-# Locked to 31173 via automated NodePort patching
 PROMETHEUS_URL = "http://localhost:31173"
 prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
 
@@ -28,63 +27,48 @@ def load_models():
     global iso_model
     if os.path.exists(ISO_MODEL_PATH):
         iso_model = joblib.load(ISO_MODEL_PATH)
-        print(f"✅ Isolation Forest loaded successfully from {ISO_MODEL_PATH}")
+        print(f"✅ Isolation Forest loaded successfully")
 
-# --- CPU ANOMALY DETECTION (Reactive Layer) ---
+# --- CPU ANOMALY DETECTION ---
 @app.get("/detect/live")
 async def detect_live():
-    """Inference for real-time CPU spikes using Isolation Forest"""
     if iso_model is None:
-        raise HTTPException(status_code=503, detail="Isolation Forest model not loaded")
+        raise HTTPException(status_code=503, detail="Model not loaded")
     try:
-        # Querying 30 minutes of CPU data at 30s intervals
         query = "sum(rate(node_cpu_seconds_total[1m]))[30m:30s]"
         result = prom.custom_query(query=query)
         if not result:
-            return {"status": "error", "message": "No CPU data found"}
+            return {"status": "error", "message": "No CPU data"}
 
         df = pd.DataFrame(result[0]['values'], columns=['timestamp', 'value'])
         df['value'] = df['value'].astype(float)
-        df['time_formatted'] = df['timestamp'].apply(
-            lambda x: datetime.fromtimestamp(float(x)).strftime('%H:%M:%S')
-        )
-        
-        # Inference: -1 = Anomaly, 1 = Normal
+        df['time_formatted'] = df['timestamp'].apply(lambda x: datetime.fromtimestamp(float(x)).strftime('%H:%M:%S'))
         df['is_anomaly'] = iso_model.predict(df[['value']])
-
+        
         return {
             "status": "success",
-            "summary": {
-                "current_usage": round(df['value'].iloc[-1], 4), 
-                "anomalies_found": len(df[df['is_anomaly'] == -1])
-            },
+            "summary": {"current_usage": round(df['value'].iloc[-1], 4), "anomalies_found": len(df[df['is_anomaly'] == -1])},
             "all_metrics": df[['time_formatted', 'value', 'is_anomaly']].to_dict(orient='records')
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- MEMORY FORECASTING (Predictive Layer) ---
+# --- MEMORY FORECASTING ---
 @app.get("/predict/memory")
 async def predict_memory():
-    """Short-term forecasting using Prophet to detect Memory Leaks"""
     try:
         query = "node_memory_Active_bytes"
         result = prom.custom_query(query=query + "[6h:5m]")
-        if not result: 
-            return {"status": "error", "message": "No memory data found"}
+        if not result: return {"status": "error", "message": "No data"}
 
         df = pd.DataFrame(result[0]['values'], columns=['ds', 'y'])
         df['ds'] = pd.to_datetime(df['ds'], unit='s')
         df['y'] = df['y'].astype(float) / (1024 * 1024) # MB
 
-        # Fast training on recent window
         m = Prophet(changepoint_prior_scale=0.01, yearly_seasonality=False, weekly_seasonality=False)
         m.fit(df)
-        
-        # Predict 2 hours into the future
         future = m.make_future_dataframe(periods=24, freq='5min')
         forecast = m.predict(future)
-        
         res = forecast[['ds', 'yhat', 'yhat_upper', 'yhat_lower']].tail(36)
         res['time_formatted'] = res['ds'].dt.strftime('%H:%M')
 
@@ -94,19 +78,15 @@ async def predict_memory():
             "predicted_val_2h_mb": round(forecast['yhat'].iloc[-1], 2),
             "forecast": res.to_dict(orient='records')
         }
-    except Exception as e: 
-        return {"status": "error", "message": str(e)}
+    except Exception as e: return {"status": "error", "message": str(e)}
 
-# --- DISK CAPACITY FORECASTING (Strategic Layer) ---
+# --- DISK CAPACITY FORECASTING ---
 @app.get("/predict/disk")
 async def predict_disk():
-    """Long-term forecasting to predict Disk exhaustion"""
     try:
-        # Aggregated query targeting the root filesystem to bypass cloud device naming variations
-        query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"}) * 100'
-        result = prom.custom_query(query=query + "[24h:30m]")
-        if not result: 
-            return {"status": "error", "message": "No disk data found"}
+        query = '(sum(node_filesystem_size_bytes{mountpoint="/"}) - sum(node_filesystem_avail_bytes{mountpoint="/"})) / sum(node_filesystem_size_bytes{mountpoint="/"} * 100)'
+        result = prom.custom_query(query=query + "[24h:15m]")
+        if not result: return {"status": "error", "message": "No data"}
 
         df = pd.DataFrame(result[0]['values'], columns=['ds', 'y'])
         df['ds'] = pd.to_datetime(df['ds'], unit='s')
@@ -114,11 +94,9 @@ async def predict_disk():
 
         m = Prophet(changepoint_prior_scale=0.01, yearly_seasonality=False)
         m.fit(df)
-        
-        # Predict 2 days into the future
         future = m.make_future_dataframe(periods=48, freq='H')
         forecast = m.predict(future)
-
+        
         limit_hit = forecast[forecast['yhat'] >= 90]
         days = "Safe (>2 days)"
         if not limit_hit.empty:
@@ -130,12 +108,8 @@ async def predict_disk():
             "days_until_90_percent": days,
             "forecast": forecast[['ds', 'yhat']].tail(48).to_dict(orient='records')
         }
-    except Exception as e: 
-        return {"status": "error", "message": str(e)}
+    except Exception as e: return {"status": "error", "message": str(e)}
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok", 
-        "prometheus_connected": prom.check_prometheus_connection()
-    }
+    return {"status": "ok", "prometheus_connected": prom.check_prometheus_connection()}
