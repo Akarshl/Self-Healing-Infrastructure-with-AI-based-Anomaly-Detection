@@ -156,6 +156,11 @@
                 - name: cpu-mem-stress
                   image: polinux/stress-ng:latest
                   args: ["--cpu", "2", "--vm", "1", "--vm-bytes", "512M", "--timeout", "600s"]
+                  resources:
+                    requests:
+                      ephemeral-storage: "100Mi"
+                    limits:
+                      ephemeral-storage: "200Mi"
                 
                 - name: disk-leak
                   image: ubuntu
@@ -165,6 +170,12 @@
                         dd if=/dev/zero of=/data/leak-$(date +%s).img bs=1M count=100;
                         sleep 30;
                       done
+                  resources:
+                    requests:
+                      ephemeral-storage: "500Mi"
+                    limits:
+                      # This limit covers both the /data volume and the container logs
+                      ephemeral-storage: "1.5Gi"
                   volumeMounts:
                   - name: data-volume
                     mountPath: /data
@@ -172,6 +183,7 @@
                 volumes:
                 - name: data-volume
                   emptyDir:
+                    # granual control specifically for this volume
                     sizeLimit: "1Gi"
       
     - name: Apply Chaos Deployment
