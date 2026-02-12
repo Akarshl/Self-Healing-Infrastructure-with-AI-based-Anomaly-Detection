@@ -133,7 +133,7 @@
 
     # --- 5. Multi-Vector Chaos Setup ---
     
-    - name: Create Chaos Deployment (CPU + Memory Stress)
+    - name: Create Chaos Deployment
       copy:
         dest: "{{ project_dir }}/chaos-deployment.yaml"
         content: |
@@ -153,10 +153,28 @@
                   app: chaos-worker
               spec:
                 containers:
-                - name: stress
+                # --- Container 1: CPU & Memory Stress ---
+                - name: cpu-mem-stress
                   image: polinux/stress-ng:latest
-                  # Creates 2 CPU core stress AND 512MB Memory leak pattern
                   args: ["--cpu", "2", "--vm", "1", "--vm-bytes", "512M", "--timeout", "600s"]
+                
+                # --- Container 2: Disk Leak ---
+                - name: disk-leak
+                  image: ubuntu
+                  command: ["/bin/sh", "-c"]
+                  args:
+                    - while true; do
+                        dd if=/dev/zero of=/data/leak-$(date +%s).img bs=1M count=100;
+                        sleep 30;
+                      done
+                  volumeMounts:
+                  - name: data-volume
+                    mountPath: /data
+                
+                volumes:
+                - name: data-volume
+                  emptyDir:
+                    sizeLimit: "1Gi"
       
     - name: Apply Chaos Deployment
       become: no
